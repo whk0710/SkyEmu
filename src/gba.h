@@ -2412,7 +2412,7 @@ static size_t gba_serial_write(serial_port_t port, const uint8_t* data, size_t s
 
   log_printf("Bulk write successful, wrote %d bytes", result);
   return result;
-#elif define(_WIN32)
+#elif defined(_WIN32)
   DWORD written = 0;
   if (!WriteFile(port, data, size, &written, NULL)) {
     log_printf("[Serial] WriteFile error: %lu\n", GetLastError());
@@ -2462,7 +2462,7 @@ static size_t gba_serial_read(serial_port_t port, uint8_t* data, size_t size) {
 
   log_printf("Bulk read successful, read %d bytes", total_read);
   return total_read;
-#elif define(_WIN32)
+#elif defined(_WIN32)
   DWORD read_count = 0;
   if (!ReadFile(port, data, size, &read_count, NULL)) {
     return 0;

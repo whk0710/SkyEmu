@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "artifactType": {
     "type": "APK",
     "kind": "Directory"
@@ -10,9 +10,11 @@
     {
       "type": "SINGLE",
       "filters": [],
-      "versionCode": 0,
-      "versionName": "",
-      "outputFile": "app-release.apk"
+      "attributes": [],
+      "versionCode": 33,
+      "versionName": "v3.3",
+      "outputFile": "com.sky.SkyEmu-v33-release.apk"
     }
-  ]
+  ],
+  "elementType": "File"
 }

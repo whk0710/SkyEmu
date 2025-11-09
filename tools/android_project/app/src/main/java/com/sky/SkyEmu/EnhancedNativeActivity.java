@@ -5,11 +5,20 @@ import static android.view.InputDevice.SOURCE_GAMEPAD;
 import static android.view.InputDevice.SOURCE_JOYSTICK;
 import static android.view.KeyEvent.*;
 
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Rect;
+import android.hardware.usb.UsbConstants;
+import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbDeviceConnection;
+import android.hardware.usb.UsbEndpoint;
+import android.hardware.usb.UsbInterface;
+import android.hardware.usb.UsbManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -29,6 +38,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.app.NativeActivity;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.Toast;
 
 import androidx.browser.customtabs.CustomTabsIntent;
 
@@ -38,6 +48,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.security.Key;
+import java.util.HashMap;
 import java.util.Locale;
 import java.util.Vector;
 
@@ -45,7 +56,10 @@ public class EnhancedNativeActivity extends NativeActivity {
     final static int APP_STORAGE_ACCESS_REQUEST_CODE = 501; // Any value
     final static int STORAGE_PERMISSION_CODE = 501; // Any value
     final static int FILE_PICKER_REQUEST_CODE = 123;
-    final static String TAG="SkyEmu"; // Any value
+    private static final String ACTION_USB_PERMISSION = "com.sky.SkyEmu.USB_PERMISSION";
+    final static String TAG = "SkyEmu-whk0710"; // Any value
+    private UsbManager usbManager;
+    private UsbDevice usbDevice;
     public Rect visibleRect;
     public EditText invisibleEditText;
     public View mRootView;
@@ -56,8 +70,108 @@ public class EnhancedNativeActivity extends NativeActivity {
     static {
         System.loadLibrary("SkyEmu");
     }
+
+    private final BroadcastReceiver usbReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            if (ACTION_USB_PERMISSION.equals(action)) {
+                if (usbDevice != null) {
+                    try {
+                        connectDevice(usbDevice);
+                    } catch (Throwable ignore) {
+                    }
+                } else {
+                    Toast.makeText(EnhancedNativeActivity.this, "没找到device", Toast.LENGTH_SHORT).show();
+                }
+            } else if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(action)) {
+                findDevice();
+            }
+        }
+    };
+
     public void requestPermissions() {
     }
+
+    private void findDevice() {
+        try {
+            HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
+            for (UsbDevice device : deviceList.values()) {
+                if (device.getVendorId() == 0x483 && device.getProductId() == 0x721) {
+                    usbDevice = device;
+                    permissionCheck(usbDevice);
+                    break;
+                }
+            }
+        } catch (Throwable ignore) {
+        }
+    }
+
+    private void permissionCheck(UsbDevice device) {
+        if (usbManager.hasPermission(device)) {
+            connectDevice(device);
+        } else {
+            PendingIntent permissionIntent = PendingIntent.getBroadcast(
+                    this, 0, new Intent(ACTION_USB_PERMISSION),
+                    PendingIntent.FLAG_IMMUTABLE
+            );
+            usbManager.requestPermission(device, permissionIntent);
+        }
+    }
+
+    private void connectDevice(UsbDevice device) {
+        UsbDeviceConnection connection = usbManager.openDevice(device);
+        if (connection == null) {
+            Log.e(TAG, "Failed to open device");
+            Toast.makeText(this, "usb连接失败", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        UsbInterface usbInterface = null;
+
+        for (int i = 0; i < device.getInterfaceCount(); i++) {
+            if (device.getInterface(i).getInterfaceClass() == 10) {
+                usbInterface = device.getInterface(i);
+                break;
+            }
+        }
+
+        if (usbInterface == null) {
+            Toast.makeText(this, "串口打开失败", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (!connection.claimInterface(usbInterface, true)) {
+            Toast.makeText(this, "claimInterface失败", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        int fd = connection.getFileDescriptor();
+
+        UsbEndpoint inEndpoint = null;
+        UsbEndpoint outEndpoint = null;
+
+        // 查找端点
+        for (int j = 0; j < usbInterface.getEndpointCount(); j++) {
+            UsbEndpoint endpoint = usbInterface.getEndpoint(j);
+            if (endpoint.getDirection() == UsbConstants.USB_DIR_IN) {
+                inEndpoint = endpoint; //read
+            } else if (endpoint.getDirection() == UsbConstants.USB_DIR_OUT) {
+                outEndpoint = endpoint; //write
+            }
+        }
+
+        if (inEndpoint == null || outEndpoint == null) {
+            Toast.makeText(this, "EndPoint获取失败", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        Toast.makeText(this, "ChisBeggar连接成功!", Toast.LENGTH_SHORT).show();
+
+        Log.i(TAG, "connect success, fd = " + fd);
+        set_chis_port_fd(fd, inEndpoint.getAddress() & 0xff, outEndpoint.getAddress() & 0xff);
+    }
+
     public float getDPIScale(){
         DisplayMetrics metrics = getResources().getDisplayMetrics();
         getWindowManager().getDefaultDisplay().getRealMetrics(metrics);
@@ -240,6 +354,22 @@ public class EnhancedNativeActivity extends NativeActivity {
         invisibleEditText=null;
         keyboardEvents = new Vector<Integer>(5);
 
+        usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
+
+        // 注册USB广播接收器
+        try {
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(ACTION_USB_PERMISSION);
+            filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(usbReceiver, filter, RECEIVER_EXPORTED);
+            } else {
+                registerReceiver(usbReceiver, filter);
+            }
+        } catch (Throwable ignore) {
+        }
+
         EnhancedNativeActivity activity = this;
         mRootView.getViewTreeObserver().addOnGlobalLayoutListener(
             new ViewTreeObserver.OnGlobalLayoutListener() {
@@ -296,6 +426,8 @@ public class EnhancedNativeActivity extends NativeActivity {
                         }
                     });
         }
+
+        findDevice();
     }
     public void openFile(){
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -398,4 +530,5 @@ public class EnhancedNativeActivity extends NativeActivity {
     }
     public native void se_android_load_file(String filePath);
     public native void se_android_load_rom(String filePath);
+    public native void set_chis_port_fd(int fd, int epAddr, int spAddr);
 }

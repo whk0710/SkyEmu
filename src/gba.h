@@ -28,6 +28,21 @@
 #elif defined(__linux__)
   #include <dirent.h>
 #endif
+
+#ifdef SE_PLATFORM_ANDROID
+  #include <android/log.h>
+  #include <linux/usbdevice_fs.h>
+  #include <sys/ioctl.h>
+  #include <fcntl.h>
+  #include <unistd.h>
+  #include <string.h>
+  #include <errno.h>
+
+  extern int port_fd;
+  extern int in_addr;
+  extern int out_addr;
+#endif
+
 //Should be power of 2 for perf, 8192 samples gives ~85ms maximal latency for 48kHz
 #define LR 14
 #define PC 15
@@ -941,10 +956,14 @@ static bool log_file_initialized = false;
 
 // 日志输出函数
 static void log_printf(const char* format, ...) {
-#if GBA_SERIAL_LOG_ENABLED
+#if !GBA_SERIAL_LOG_ENABLED
+    return;
+#endif
+
   va_list args;
   va_start(args, format);
-  
+#ifdef SE_PLATFORM_ANDROID
+  __android_log_vprint(ANDROID_LOG_INFO, "SkyEmu-whk0710", format, args);
 #if GBA_SERIAL_LOG_TO_FILE
   // 输出到文件
   if (!log_file_initialized) {
@@ -2257,6 +2276,10 @@ static char* gba_auto_find_serial_port() {
 }
 
 static serial_port_t gba_open_serial_port(const char* port_name) {
+#ifdef SE_PLATFORM_ANDROID
+    log_printf("[Serial] find android port, fd = %d", port_fd);
+    return port_fd;
+#endif
   // 如果是 "AUTO"，自动查找设备
   if (strcmp(port_name, "AUTO") == 0) {
     log_printf("[Serial] AUTO mode: searching for device...\n");
@@ -2374,7 +2397,22 @@ static void gba_close_serial_port(serial_port_t port) {
 }
 
 static size_t gba_serial_write(serial_port_t port, const uint8_t* data, size_t size) {
-#ifdef _WIN32
+#ifdef SE_PLATFORM_ANDROID
+  struct usbdevfs_bulktransfer bulk;
+  bulk.ep = out_addr;
+  bulk.len = size;
+  bulk.data = (void*)data;
+  bulk.timeout = 0;
+
+  int result = ioctl(port, USBDEVFS_BULK, &bulk);
+  if (result < 0) {
+      log_printf("Bulk write failed: %s (errno: %d)", strerror(errno), errno);
+      return -1;
+  }
+
+  log_printf("Bulk write successful, wrote %d bytes", result);
+  return result;
+#elif define(_WIN32)
   DWORD written = 0;
   if (!WriteFile(port, data, size, &written, NULL)) {
     log_printf("[Serial] WriteFile error: %lu\n", GetLastError());
@@ -2395,7 +2433,36 @@ static size_t gba_serial_write(serial_port_t port, const uint8_t* data, size_t s
 }
 
 static size_t gba_serial_read(serial_port_t port, uint8_t* data, size_t size) {
-#ifdef _WIN32
+#ifdef SE_PLATFORM_ANDROID
+  size_t total_read = 0;
+  while (total_read < size) {
+      int retain;
+      if (size - total_read > 512) {
+          retain = 512;
+      } else {
+          retain = size - total_read;
+      }
+      struct usbdevfs_bulktransfer bulk;
+      bulk.ep = in_addr;
+      bulk.len = retain;
+      bulk.data =  (unsigned char *)data + total_read;
+      bulk.timeout = 0;
+
+      int result = ioctl(port, USBDEVFS_BULK, &bulk);
+      if (result < 0) {
+          if (errno != ETIMEDOUT) {
+              log_printf("Bulk read failed: %s (errno: %d)", strerror(errno), errno);
+          }
+          return -1;
+      } else if (result == 0) {
+          break;
+      }
+      total_read += result;
+  }
+
+  log_printf("Bulk read successful, read %d bytes", total_read);
+  return total_read;
+#elif define(_WIN32)
   DWORD read_count = 0;
   if (!ReadFile(port, data, size, &read_count, NULL)) {
     return 0;

@@ -59,6 +59,9 @@
 
 #ifdef SE_PLATFORM_ANDROID
   #include <android/log.h>
+  int port_fd = -1;
+  int in_addr = 0;
+  int out_addr = 0;
 #endif
 #ifdef SE_PLATFORM_IOS
 #include "ios_support.h"
@@ -4472,7 +4475,7 @@ void se_boxed_image_triple_label(const char * first_label, const char* second_la
 #ifdef SE_PLATFORM_ANDROID
 #include <android/log.h>
 
-#define TAG "SkyEmu"
+#define TAG "SkyEmu-whk0710"
 
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR,    TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,     TAG, __VA_ARGS__)
@@ -8866,6 +8869,13 @@ void Java_com_sky_SkyEmu_EnhancedNativeActivity_se_1android_1load_1file(JNIEnv *
   const char *nativeFilePath = (*env)->GetStringUTFChars(env, filePath, 0);
   se_file_browser_accept(nativeFilePath);
   (*env)->ReleaseStringUTFChars(env, filePath, nativeFilePath);
+}
+
+void Java_com_sky_SkyEmu_EnhancedNativeActivity_set_1chis_1port_1fd(JNIEnv *env, jobject thiz, jint fd, jint epAddr, jint spAddr) {
+    LOGE("fd = %d, epAddr=%d, spAddr=%d", fd, epAddr, spAddr);
+    port_fd = fd;
+    in_addr = epAddr;
+    out_addr = spAddr;
 }
 #endif
 
